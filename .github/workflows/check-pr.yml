@@ -1,0 +1,75 @@
+name: check-pr
+
+on:
+  pull_request:
+
+jobs:
+  check-pr:
+    name: check-pr
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+        with:
+          # GitHub tests a "merge commit" of your PR on top of main.
+          # We need its parent too, so we can see what your PR changed.
+          fetch-depth: 2
+
+      - name: Check the guestbook rules
+        shell: bash
+        run: |
+          FIELDS=("Name" "Major" "Year" "GitHub username" "One thing I want to build")
+          problems=0
+
+          oops() {
+            echo "::error::$1"
+            problems=$((problems + 1))
+          }
+
+          # List every file this PR touches. A = added, M = modified, D = deleted.
+          changes=$(git diff --name-status --no-renames HEAD^1 HEAD)
+          echo "Files in this pull request:"
+          echo "$changes"
+          echo
+
+          if [ -z "$changes" ]; then
+            oops "This pull request does not change any files. Add your file in the attendees/ folder."
+          fi
+
+          while IFS=$'\t' read -r status file; do
+            [ -z "$file" ] && continue
+
+            # Rule 1: only touch the attendees/ folder.
+            if [[ "$file" != attendees/* ]]; then
+              oops "You changed '$file', which is outside the attendees/ folder. Please only add your own file in attendees/."
+              continue
+            fi
+
+            # Rule 2: only ADD a new file. Do not edit or delete existing ones.
+            if [ "$status" != "A" ]; then
+              oops "You changed or deleted '$file', which already existed. Please only add your own new file, like attendees/<your-github-username>.md."
+              continue
+            fi
+
+            # Your file should be a Markdown file directly inside attendees/.
+            if [[ ! "$file" =~ ^attendees/[^/]+\.md$ ]]; then
+              oops "'$file' should be named like attendees/<your-github-username>.md (directly in attendees/, ending in .md)."
+              continue
+            fi
+
+            # Rule 3: every field from the template is there and filled in.
+            for field in "${FIELDS[@]}"; do
+              if ! grep -qE "^- \*\*${field}:\*\*[[:space:]]*[^[:space:]]" "$file"; then
+                oops "In '$file', the field '${field}' is missing or empty. Copy attendees/_template.md and fill in every line."
+              fi
+            done
+          done <<< "$changes"
+
+          echo
+          if [ "$problems" -gt 0 ]; then
+            echo "Found $problems thing(s) to fix. Read the red messages above, fix them, then push again."
+            echo "Your pull request will update by itself when you push. No need to open a new one!"
+            exit 1
+          fi
+
+          echo "All good! Your guestbook entry follows the rules. Nice work!"
